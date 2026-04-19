@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IoT Smart-Gateway Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:       #0d1117;
+    --surface:  #161b22;
+    --border:   #30363d;
+    --text:     #e6edf3;
+    --muted:    #8b949e;
+    --green:    #3fb950;
+    --red:      #f85149;
+    --orange:   #d29922;
+    --blue:     #58a6ff;
+    --purple:   #bc8cff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+  }
+
+  /* ── Header ── */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  header h1 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .pulse-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: pulse 1.5s infinite;
+  }
+  @keyframes pulse {
+    0%,100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: .4; transform: scale(.7); }
+  }
+  .course-tag { font-size: .75rem; color: var(--muted); }
+
+  /* ── Stats Bar ── */
+  .stats-bar {
+    display: flex;
+    gap: 16px;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 20px;
+    min-width: 140px;
+    flex: 1;
+    text-align: center;
+  }
+  .stat-card .val { font-size: 2rem; font-weight: 700; }
+  .stat-card .lbl { font-size: .75rem; color: var(--muted); margin-top: 4px; }
+  .val.green  { color: var(--green); }
+  .val.red    { color: var(--red); }
+  .val.orange { color: var(--orange); }
+  .val.blue   { color: var(--blue); }
+
+  /* ── Main Grid ── */
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    gap: 16px;
+    padding: 16px 24px;
+    min-height: calc(100vh - 160px);
+  }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+  /* ── Device Cards ── */
+  .section-title {
+    font-size: .8rem;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+  #device-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 12px;
+  }
+  .device-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    transition: border-color .2s;
+  }
+  .device-card.isolated { border-color: var(--red); }
+  .device-card.active   { border-color: var(--green); }
+
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 10px;
+  }
+  .card-name  { font-weight: 600; font-size: .95rem; }
+  .card-loc   { font-size: .75rem; color: var(--muted); margin-top: 2px; }
+  .badge {
+    font-size: .7rem;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  .badge.active   { background: rgba(63,185,80,.15); color: var(--green); }
+  .badge.isolated { background: rgba(248,81,73,.15); color: var(--red); }
+
+  .metrics { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+  .metric-chip {
+    background: rgba(255,255,255,.05);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: .8rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .metric-chip .m-val { font-size: 1rem; font-weight: 700; color: var(--blue); }
+  .metric-chip .m-key { font-size: .65rem; color: var(--muted); margin-top: 1px; }
+
+  .card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+  .last-seen { font-size: .7rem; color: var(--muted); }
+  .btn-iso, .btn-restore {
+    font-size: .72rem;
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-weight: 600;
+    transition: opacity .2s;
+  }
+  .btn-iso     { background: rgba(248,81,73,.2); color: var(--red); }
+  .btn-restore { background: rgba(63,185,80,.2); color: var(--green); }
+  .btn-iso:hover, .btn-restore:hover { opacity: .75; }
+
+  /* ── Alert Feed ── */
+  .side-panel { display: flex; flex-direction: column; gap: 16px; }
+  #alert-feed {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    max-height: 420px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .alert-item {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: .8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .alert-item:last-child { border-bottom: none; }
+  .alert-ts     { font-size: .68rem; color: var(--muted); }
+  .alert-device { font-weight: 600; }
+  .alert-msg    { color: var(--muted); }
+  .alert-ISOLATION .alert-device { color: var(--red); }
+  .alert-RESTORE   .alert-device { color: var(--green); }
+  .alert-REGISTER  .alert-device { color: var(--blue); }
+
+  /* ── Chart ── */
+  .chart-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+  }
+  .chart-panel canvas { max-height: 200px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span class="pulse-dot"></span> IoT Smart-Gateway Dashboard</h1>
+  <span class="course-tag">CPAN226 — Network Programming | Mohammed Darras</span>
+</header>
+
+<div class="stats-bar">
+  <div class="stat-card">
+    <div class="val blue" id="stat-total">0</div>
+    <div class="lbl">Total Devices</div>
+  </div>
+  <div class="stat-card">
+    <div class="val green" id="stat-active">0</div>
+    <div class="lbl">Active</div>
+  </div>
+  <div class="stat-card">
+    <div class="val red" id="stat-isolated">0</div>
+    <div class="lbl">Isolated</div>
+  </div>
+  <div class="stat-card">
+    <div class="val orange" id="stat-alerts">0</div>
+    <div class="lbl">Total Alerts</div>
+  </div>
+</div>
+
+<div class="grid">
+  <!-- Device Grid -->
+  <div>
+    <div class="section-title">Connected Devices</div>
+    <div id="device-grid">
+      <div style="color:var(--muted);font-size:.9rem;">Waiting for devices…</div>
+    </div>
+  </div>
+
+  <!-- Side Panel -->
+  <div class="side-panel">
+    <div>
+      <div class="section-title">Alert Feed</div>
+      <div id="alert-feed">
+        <div style="color:var(--muted);font-size:.8rem;">No alerts yet.</div>
+      </div>
+    </div>
+    <div class="chart-panel">
+      <div class="section-title" style="margin-bottom:8px">Live Temperature (°C)</div>
+      <canvas id="temp-chart"></canvas>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+const devices = {};       // device_id → device object
+const chartData = {};     // device_id → [values]
+const CHART_POINTS = 20;
+
+// ── Socket.IO ────────────────────────────────────────────────────────────────
+const socket = io();
+
+socket.on("connect",    () => console.log("[WS] Connected"));
+socket.on("disconnect", () => console.log("[WS] Disconnected"));
+
+socket.on("init", ({ devices: devList, alerts }) => {
+  devList.forEach(d => updateDevice(d));
+  alerts.slice().reverse().forEach(a => prependAlert(a));
+  refreshStats();
+});
+
+socket.on("device_update", dev  => { updateDevice(dev); refreshStats(); });
+socket.on("sensor_data",   data => updateChart(data));
+socket.on("alert",         a    => { prependAlert(a); refreshStats(); });
+
+// ── Device Cards ─────────────────────────────────────────────────────────────
+function updateDevice(dev) {
+  devices[dev.id] = dev;
+  renderDevice(dev);
+  refreshStats();
+}
+
+function renderDevice(dev) {
+  const grid = document.getElementById("device-grid");
+
+  // Remove placeholder
+  const placeholder = grid.querySelector("div");
+  if (placeholder && !placeholder.dataset.isCard) placeholder.remove();
+
+  const existing = document.getElementById(`card-${dev.id}`);
+  const card = existing || document.createElement("div");
+  card.className = `device-card ${dev.isolated ? "isolated" : "active"}`;
+  card.id = `card-${dev.id}`;
+  card.dataset.isCard = "1";
+
+  const metrics = Object.entries(dev.latest || {})
+    .map(([k, v]) => `
+      <div class="metric-chip">
+        <div class="m-val">${v}</div>
+        <div class="m-key">${k}</div>
+      </div>`)
+    .join("");
+
+  const btnHtml = dev.isolated
+    ? `<button class="btn-restore" onclick="restoreDevice('${dev.id}')">✓ Restore</button>`
+    : `<button class="btn-iso"     onclick="isolateDevice('${dev.id}')">⊘ Isolate</button>`;
+
+  card.innerHTML = `
+    <div class="card-header">
+      <div>
+        <div class="card-name">${dev.name}</div>
+        <div class="card-loc">📍 ${dev.location} · ${dev.type}</div>
+      </div>
+      <span class="badge ${dev.isolated ? "isolated" : "active"}">
+        ${dev.isolated ? "ISOLATED" : "ACTIVE"}
+      </span>
+    </div>
+    <div class="metrics">${metrics || '<span style="color:var(--muted);font-size:.8rem">Awaiting data…</span>'}</div>
+    <div class="card-footer">
+      <div class="last-seen">Last seen: ${dev.last_seen || "—"}</div>
+      ${btnHtml}
+    </div>`;
+
+  if (!existing) grid.appendChild(card);
+}
+
+// ── Controls ─────────────────────────────────────────────────────────────────
+function isolateDevice(id) {
+  socket.emit("manual_isolate", { device_id: id });
+}
+function restoreDevice(id) {
+  socket.emit("manual_restore", { device_id: id });
+}
+
+// ── Alert Feed ────────────────────────────────────────────────────────────────
+function prependAlert(a) {
+  const feed = document.getElementById("alert-feed");
+  const empty = feed.querySelector("div");
+  if (empty && !empty.dataset.isAlert) empty.remove();
+
+  const el = document.createElement("div");
+  el.className = `alert-item alert-${a.type}`;
+  el.dataset.isAlert = "1";
+  el.innerHTML = `
+    <div class="alert-ts">${a.ts}</div>
+    <div class="alert-device">${a.device} — ${a.type}</div>
+    <div class="alert-msg">${a.message}</div>`;
+  feed.prepend(el);
+
+  // Keep max 50 alerts in DOM
+  while (feed.children.length > 50) feed.removeChild(feed.lastChild);
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+function refreshStats() {
+  const all      = Object.values(devices);
+  const isolated = all.filter(d => d.isolated).length;
+  document.getElementById("stat-total").textContent    = all.length;
+  document.getElementById("stat-active").textContent   = all.length - isolated;
+  document.getElementById("stat-isolated").textContent = isolated;
+  document.getElementById("stat-alerts").textContent   =
+    document.querySelectorAll(".alert-item").length;
+}
+
+// ── Live Chart (temperature) ──────────────────────────────────────────────────
+const COLORS = ["#58a6ff","#3fb950","#d29922","#bc8cff","#f85149","#79c0ff"];
+let colorIdx = 0;
+
+const chart = new Chart(document.getElementById("temp-chart"), {
+  type: "line",
+  data: { labels: [], datasets: [] },
+  options: {
+    animation: false,
+    plugins: { legend: { labels: { color: "#8b949e", font: { size: 10 } } } },
+    scales: {
+      x: { ticks: { color: "#8b949e", font: { size: 9 }, maxTicksLimit: 6 }, grid: { color: "#21262d" } },
+      y: { ticks: { color: "#8b949e" }, grid: { color: "#21262d" } },
+    },
+  },
+});
+
+function updateChart({ device_id, ts, data }) {
+  if (!("temperature" in data)) return;
+
+  // Labels (shared x-axis — use time)
+  const label = ts.slice(11, 19);  // HH:MM:SS
+  if (!chart.data.labels.includes(label)) {
+    chart.data.labels.push(label);
+    if (chart.data.labels.length > CHART_POINTS)
+      chart.data.labels.shift();
+  }
+
+  // Dataset per device
+  let ds = chart.data.datasets.find(d => d.label === device_id);
+  if (!ds) {
+    ds = {
+      label:           device_id,
+      data:            [],
+      borderColor:     COLORS[colorIdx++ % COLORS.length],
+      borderWidth:     1.5,
+      pointRadius:     2,
+      tension:         0.3,
+      fill:            false,
+    };
+    chart.data.datasets.push(ds);
+  }
+  ds.data.push(data.temperature);
+  if (ds.data.length > CHART_POINTS) ds.data.shift();
+
+  chart.update();
+}
+</script>
+</body>
+</html>
